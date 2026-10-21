@@ -321,5 +321,46 @@ if uploaded_file is not None:
 
             st.plotly_chart(fig4, use_container_width=True)
 
+                    # ==================================
+        # STATISTICAL SUMMARY
+        # ==================================
+
+        st.header("Statistical Summary")
+
+        numeric_df = filtered_df.select_dtypes(
+            include="number"
+        )
+
+        if not numeric_df.empty:
+            summary = numeric_df.describe().T
+            summary = summary.reset_index()
+            summary = summary.rename(
+                columns={"index": "Column"}
+            )
+
+            st.dataframe(
+                summary,
+                use_container_width=True
+            )
+        else:
+            st.info("No numeric columns available.")
+
+        # ==================================
+        # DOWNLOAD FILTERED DATA
+        # ==================================
+
+        st.header("Download Results")
+
+        csv_data = filtered_df.to_csv(
+            index=False
+        ).encode("utf-8")
+
+        st.download_button(
+            label="Download Filtered Data as CSV",
+            data=csv_data,
+            file_name="filtered_sales_data.csv",
+            mime="text/csv"
+        )
+
     except Exception as e:
         st.error(f"Unable to read the file: {e}")
