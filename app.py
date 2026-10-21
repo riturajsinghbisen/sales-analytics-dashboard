@@ -1,366 +1,96 @@
-import pandas as pd
-import streamlit as st
-import plotly.express as px
 from pathlib import Path
+import json
+
+import pandas as pd
+import plotly.express as px
+import streamlit as st
+
 
 st.set_page_config(
     page_title="Sales Analytics Dashboard",
     page_icon="📊",
-    layout="wide"
+    layout="wide",
 )
 
-st.title("Sales Analytics Dashboard")
-st.write("Upload and validate your sales dataset.")
+NUMERIC_COLUMNS = ["Sales", "Profit", "Quantity", "Discount"]
+DATE_COLUMNS = ["Order Date", "Ship Date"]
+FILTER_COLUMNS = ["Region", "Category", "Segment", "Ship Mode", "State"]
+REQUIRED_KPI_COLUMNS = ["Sales", "Profit", "Order ID", "Quantity"]
 
-uploaded_file = st.file_uploader(
-    "Upload CSV, Excel, or JSON",
-    type=["csv", "xlsx", "json"]
-)
 
-if uploaded_file is not None:
-    try:
-        extension = Path(uploaded_file.name).suffix.lower()
+def read_uploaded_file(uploaded_file) -> pd.DataFrame:
+    """Read supported CSV, XLSX, or JSON files into a DataFrame."""
+    suffix = Path(uploaded_file.name).suffix.lower()
+    if suffix == ".csv":
+        return pd.read_csv(uploaded_file)
+    if suffix == ".xlsx":
+        return pd.read_excel(uploaded_file)
+    if suffix == ".json":
+        try:
+            return pd.read_json(uploaded_file)
+        except ValueError:
+            uploaded_file.seek(0)
+            data = json.load(uploaded_file)
+            return pd.DataFrame(data)
+    raise ValueError("Unsupported file type. Please upload CSV, XLSX, or JSON.")
 
-        if extension == ".csv":
-            df = pd.read_csv(uploaded_file)
-        elif extension == ".xlsx":
-            df = pd.read_excel(uploaded_file)
-        elif extension == ".json":
-            df = pd.read_json(uploaded_file)
 
-        st.success("Dataset uploaded successfully!")
+def standardize_data(df: pd.DataFrame) -> pd.DataFrame:
+    """Trim column names and text cells; coerce known numeric/date columns."""
+    result = df.copy()
+    result.columns = [str(column).strip() for column in result.columns]
 
-        st.subheader("Dataset Preview")
-        st.dataframe(df.head())
-
-        st.subheader("Dataset Dimensions")
-        col1, col2 = st.columns(2)
-        col1.metric("Rows", df.shape[0])
-        col2.metric("Columns", df.shape[1])
-
-        st.subheader("Data Types")
-        st.write(df.dtypes.astype(str))
-
-        st.subheader("Missing Values")
-        st.write(df.isnull().sum())
-
-        st.subheader("Duplicate Records")
-        st.metric("Duplicates", int(df.duplicated().sum()))
-                # Data Preprocessing
-        st.header("Data Preprocessing")
-
-        # Work on a copy of the original data
-        clean_df = df.copy()
-
-        # Remove extra spaces from column names
-        clean_df.columns = clean_df.columns.str.strip()
-
-        # Remove extra spaces from text values
-        for col in clean_df.select_dtypes(include=["object"]).columns:
-            clean_df[col] = clean_df[col].apply(
-                lambda x: x.strip() if isinstance(x, str) else x
-            )
-
-        # Convert common numeric columns
-        numeric_cols = ["Sales", "Profit", "Quantity", "Discount"]
-
-        for col in numeric_cols:
-            if col in clean_df.columns:
-                clean_df[col] = pd.to_numeric(
-                    clean_df[col].astype(str).str.replace(",", "", regex=False),
-                    errors="coerce"
-                )
-
-        # Convert date columns
-        date_cols = ["Order Date", "Ship Date"]
-
-        for col in date_cols:
-            if col in clean_df.columns:
-                clean_df[col] = pd.to_datetime(
-                    clean_df[col],
-                    errors="coerce"
-                )
-
-        # Handle missing values
-        strategy = st.selectbox(
-            "Choose missing-value handling",
-            [
-                "Keep missing values",
-                "Fill with median/mode",
-                "Drop rows with missing values"
-            ]
+    for column in result.select_dtypes(include=["object", "string"]).columns:
+        result[column] = result[column].map(
+            lambda value: value.strip() if isinstance(value, str) else value
         )
 
-        if strategy == "Fill with median/mode":
-            for col in clean_df.columns:
-                if pd.api.types.is_numeric_dtype(clean_df[col]):
-                    if clean_df[col].notna().any():
-                        clean_df[col] = clean_df[col].fillna(
-                            clean_df[col].median()
-                        )
-                else:
-                    modes = clean_df[col].mode(dropna=True)
-                    if not modes.empty:
-                        clean_df[col] = clean_df[col].fillna(
-                            modes.iloc[0]
-                        )
-
-        elif strategy == "Drop rows with missing values":
-            clean_df = clean_df.dropna()
-
-        # Remove duplicates
-        remove_duplicates = st.checkbox(
-            "Remove duplicate records",
-            value=True
-        )
-
-        if remove_duplicates:
-            clean_df = clean_df.drop_duplicates()
-
-        st.subheader("Cleaned Dataset")
-        st.write("Rows after preprocessing:", len(clean_df))
-        st.write("Remaining missing values:", int(clean_df.isnull().sum().sum()))
-        st.dataframe(clean_df.head())
-
-                # ==================================
-        # INTERACTIVE FILTERS
-        # ==================================
-
-        st.header("Interactive Filters")
-
-        filtered_df = clean_df.copy()
-
-        # Filter 1: Region
-        if "Region" in filtered_df.columns:
-            regions = sorted(
-                filtered_df["Region"].dropna().unique().tolist()
+    for column in NUMERIC_COLUMNS:
+        if column in result.columns:
+            cleaned = (
+                result[column]
+                .astype("string")
+                .str.replace(r"[$,]", "", regex=True)
+                .str.strip()
             )
+            result[column] = pd.to_numeric(cleaned, errors="coerce")
 
-            selected_regions = st.multiselect(
-                "Select Region",
-                regions,
-                default=regions
-            )
+    for column in DATE_COLUMNS:
+        if column in result.columns:
+            result[column] = pd.to_datetime(result[column], errors="coerce")
 
-            filtered_df = filtered_df[
-                filtered_df["Region"].isin(selected_regions)
-            ]
+    return result
 
-        # Filter 2: Category
-        if "Category" in filtered_df.columns:
-            categories = sorted(
-                filtered_df["Category"].dropna().unique().tolist()
-            )
 
-            selected_categories = st.multiselect(
-                "Select Category",
-                categories,
-                default=categories
-            )
+def clean_data(df: pd.DataFrame, missing_strategy: str, remove_duplicates: bool) -> pd.DataFrame:
+    """Apply selected missing-value handling and duplicate removal."""
+    result = df.copy()
+    if remove_duplicates:
+        result = result.drop_duplicates()
 
-            filtered_df = filtered_df[
-                filtered_df["Category"].isin(selected_categories)
-            ]
+    if missing_strategy == "Drop rows with missing values":
+        result = result.dropna()
+    elif missing_strategy == "Fill numeric with median / text with mode":
+        for column in result.columns:
+            if pd.api.types.is_numeric_dtype(result[column]):
+                if result[column].notna().any():
+                    result[column] = result[column].fillna(result[column].median())
+            else:
+                modes = result[column].mode(dropna=True)
+                if not modes.empty:
+                    result[column] = result[column].fillna(modes.iloc[0])
+    return result
 
-        # Filter 3: Segment
-        if "Segment" in filtered_df.columns:
-            segments = sorted(
-                filtered_df["Segment"].dropna().unique().tolist()
-            )
 
-            selected_segments = st.multiselect(
-                "Select Segment",
-                segments,
-                default=segments
-            )
+def calculate_kpis(df: pd.DataFrame) -> tuple[float, float, int, float, float]:
+    """Return total sales, profit, unique orders, quantity, and profit margin."""
+    sales = float(df["Sales"].sum()) if "Sales" in df.columns else 0.0
+    profit = float(df["Profit"].sum()) if "Profit" in df.columns else 0.0
+    orders = int(df["Order ID"].nunique()) if "Order ID" in df.columns else 0
+    quantity = float(df["Quantity"].sum()) if "Quantity" in df.columns else 0.0
+    margin = profit / sales * 100 if sales != 0 else 0.0
+    return sales, profit, orders, quantity, margin
 
-            filtered_df = filtered_df[
-                filtered_df["Segment"].isin(selected_segments)
-            ]
 
-        # ==================================
-        # FIVE DYNAMIC KPIs
-        # ==================================
-
-        st.header("Sales Performance KPIs")
-
-        total_sales = (
-            filtered_df["Sales"].sum()
-            if "Sales" in filtered_df.columns else 0
-        )
-
-        total_profit = (
-            filtered_df["Profit"].sum()
-            if "Profit" in filtered_df.columns else 0
-        )
-
-        total_orders = (
-            filtered_df["Order ID"].nunique()
-            if "Order ID" in filtered_df.columns else 0
-        )
-
-        total_quantity = (
-            filtered_df["Quantity"].sum()
-            if "Quantity" in filtered_df.columns else 0
-        )
-
-        profit_margin = (
-            (total_profit / total_sales) * 100
-            if total_sales != 0 else 0
-        )
-
-        # Display KPIs in five columns
-        col1, col2, col3, col4, col5 = st.columns(5)
-
-        col1.metric("Total Sales", f"${total_sales:,.2f}")
-        col2.metric("Total Profit", f"${total_profit:,.2f}")
-        col3.metric("Total Orders", f"{total_orders:,}")
-        col4.metric("Total Quantity Sold", f"{total_quantity:,.0f}")
-        col5.metric("Profit Margin", f"{profit_margin:.2f}%")
-
-        st.subheader("Filtered Data Preview")
-        st.dataframe(filtered_df.head(100), use_container_width=True)
-
-                # ==================================
-        # INTERACTIVE VISUALIZATIONS
-        # ==================================
-
-        st.header("Interactive Visualizations")
-
-        # Chart 1: Sales by Category
-        if "Category" in filtered_df.columns and "Sales" in filtered_df.columns:
-
-            st.subheader("1. Sales by Category")
-
-            category_sales = (
-                filtered_df.groupby("Category", as_index=False)["Sales"]
-                .sum()
-            )
-
-            fig1 = px.bar(
-                category_sales,
-                x="Category",
-                y="Sales",
-                color="Category",
-                title="Total Sales by Category",
-                hover_data={"Sales": ":,.2f"}
-            )
-
-            st.plotly_chart(fig1, use_container_width=True)
-
-        # Chart 2: Profit by Region
-        if "Region" in filtered_df.columns and "Profit" in filtered_df.columns:
-
-            st.subheader("2. Profit by Region")
-
-            region_profit = (
-                filtered_df.groupby("Region", as_index=False)["Profit"]
-                .sum()
-            )
-
-            fig2 = px.bar(
-                region_profit,
-                x="Region",
-                y="Profit",
-                color="Region",
-                title="Total Profit by Region",
-                hover_data={"Profit": ":,.2f"}
-            )
-
-            st.plotly_chart(fig2, use_container_width=True)
-
-        # Chart 3: Monthly Sales Trend
-        if "Order Date" in filtered_df.columns and "Sales" in filtered_df.columns:
-
-            st.subheader("3. Monthly Sales Trend")
-
-            date_df = filtered_df.dropna(subset=["Order Date"]).copy()
-            date_df["Order Date"] = pd.to_datetime(
-                date_df["Order Date"], errors="coerce"
-            )
-            date_df = date_df.dropna(subset=["Order Date"])
-
-            if not date_df.empty:
-                monthly_sales = (
-                    date_df.set_index("Order Date")["Sales"]
-                    .resample("MS")
-                    .sum()
-                    .reset_index()
-                )
-
-                fig3 = px.line(
-                    monthly_sales,
-                    x="Order Date",
-                    y="Sales",
-                    markers=True,
-                    title="Monthly Sales Over Time"
-                )
-
-                st.plotly_chart(fig3, use_container_width=True)
-
-        # Chart 4: Sales vs Profit
-        if "Sales" in filtered_df.columns and "Profit" in filtered_df.columns:
-
-            st.subheader("4. Sales vs Profit")
-
-            color_column = (
-                "Category" if "Category" in filtered_df.columns else None
-            )
-
-            fig4 = px.scatter(
-                filtered_df,
-                x="Sales",
-                y="Profit",
-                color=color_column,
-                title="Relationship Between Sales and Profit",
-                hover_data=[
-                    col for col in ["Order ID", "Region"]
-                    if col in filtered_df.columns
-                ]
-            )
-
-            st.plotly_chart(fig4, use_container_width=True)
-
-                    # ==================================
-        # STATISTICAL SUMMARY
-        # ==================================
-
-        st.header("Statistical Summary")
-
-        numeric_df = filtered_df.select_dtypes(
-            include="number"
-        )
-
-        if not numeric_df.empty:
-            summary = numeric_df.describe().T
-            summary = summary.reset_index()
-            summary = summary.rename(
-                columns={"index": "Column"}
-            )
-
-            st.dataframe(
-                summary,
-                use_container_width=True
-            )
-        else:
-            st.info("No numeric columns available.")
-
-        # ==================================
-        # DOWNLOAD FILTERED DATA
-        # ==================================
-
-        st.header("Download Results")
-
-        csv_data = filtered_df.to_csv(
-            index=False
-        ).encode("utf-8")
-
-        st.download_button(
-            label="Download Filtered Data as CSV",
-            data=csv_data,
-            file_name="filtered_sales_data.csv",
-            mime="text/csv"
-        )
-
-    except Exception as e:
-        st.error(f"Unable to read the file: {e}")
+def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
+    """Render up to five categorical filters and a date-range filter when available."""
