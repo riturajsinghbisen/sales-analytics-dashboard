@@ -1,5 +1,6 @@
 import pandas as pd
 import streamlit as st
+import plotly.express as px
 from pathlib import Path
 
 st.set_page_config(
@@ -219,6 +220,106 @@ if uploaded_file is not None:
 
         st.subheader("Filtered Data Preview")
         st.dataframe(filtered_df.head(100), use_container_width=True)
+
+                # ==================================
+        # INTERACTIVE VISUALIZATIONS
+        # ==================================
+
+        st.header("Interactive Visualizations")
+
+        # Chart 1: Sales by Category
+        if "Category" in filtered_df.columns and "Sales" in filtered_df.columns:
+
+            st.subheader("1. Sales by Category")
+
+            category_sales = (
+                filtered_df.groupby("Category", as_index=False)["Sales"]
+                .sum()
+            )
+
+            fig1 = px.bar(
+                category_sales,
+                x="Category",
+                y="Sales",
+                color="Category",
+                title="Total Sales by Category",
+                hover_data={"Sales": ":,.2f"}
+            )
+
+            st.plotly_chart(fig1, use_container_width=True)
+
+        # Chart 2: Profit by Region
+        if "Region" in filtered_df.columns and "Profit" in filtered_df.columns:
+
+            st.subheader("2. Profit by Region")
+
+            region_profit = (
+                filtered_df.groupby("Region", as_index=False)["Profit"]
+                .sum()
+            )
+
+            fig2 = px.bar(
+                region_profit,
+                x="Region",
+                y="Profit",
+                color="Region",
+                title="Total Profit by Region",
+                hover_data={"Profit": ":,.2f"}
+            )
+
+            st.plotly_chart(fig2, use_container_width=True)
+
+        # Chart 3: Monthly Sales Trend
+        if "Order Date" in filtered_df.columns and "Sales" in filtered_df.columns:
+
+            st.subheader("3. Monthly Sales Trend")
+
+            date_df = filtered_df.dropna(subset=["Order Date"]).copy()
+            date_df["Order Date"] = pd.to_datetime(
+                date_df["Order Date"], errors="coerce"
+            )
+            date_df = date_df.dropna(subset=["Order Date"])
+
+            if not date_df.empty:
+                monthly_sales = (
+                    date_df.set_index("Order Date")["Sales"]
+                    .resample("MS")
+                    .sum()
+                    .reset_index()
+                )
+
+                fig3 = px.line(
+                    monthly_sales,
+                    x="Order Date",
+                    y="Sales",
+                    markers=True,
+                    title="Monthly Sales Over Time"
+                )
+
+                st.plotly_chart(fig3, use_container_width=True)
+
+        # Chart 4: Sales vs Profit
+        if "Sales" in filtered_df.columns and "Profit" in filtered_df.columns:
+
+            st.subheader("4. Sales vs Profit")
+
+            color_column = (
+                "Category" if "Category" in filtered_df.columns else None
+            )
+
+            fig4 = px.scatter(
+                filtered_df,
+                x="Sales",
+                y="Profit",
+                color=color_column,
+                title="Relationship Between Sales and Profit",
+                hover_data=[
+                    col for col in ["Order ID", "Region"]
+                    if col in filtered_df.columns
+                ]
+            )
+
+            st.plotly_chart(fig4, use_container_width=True)
 
     except Exception as e:
         st.error(f"Unable to read the file: {e}")
